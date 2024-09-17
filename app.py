@@ -38,7 +38,7 @@ def frost_hash(text):
     combined_hash = (sha256_hash[16:] + shift12_hash)[:32]
     return combined_hash
 
-admin_hashed_password = "479acbd8c4004c518ed87652902287fe"
+admin_hashed_password = "ADMINPASSHASH"
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
