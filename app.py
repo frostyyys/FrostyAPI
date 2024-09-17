@@ -4,17 +4,6 @@ import hashlib
 import base64
 import uuid
 from datetime import datetime
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-from flask_wtf.csrf import CSRFProtect
-
-csrf = CSRFProtect(app)
-
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["500 per day", "50 per hour"]
-)
 
 app = Flask(__name__)
 
@@ -49,9 +38,8 @@ def frost_hash(text):
     combined_hash = (sha256_hash[16:] + shift12_hash)[:32]
     return combined_hash
 
-admin_hashed_password = "ADMINPASSHASH"
+admin_hashed_password = "479acbd8c4004c518ed87652902287fe"
 
-# Database models
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -62,6 +50,11 @@ class User(db.Model):
     ban_reason = db.Column(db.String(255), nullable=True)
     last_login_ip = db.Column(db.String(15), nullable=True)
     last_login_time = db.Column(db.DateTime, nullable=True)
+    
+    @property
+    def rank(self):
+        return self.license.rank if self.license else None
+
 
 class License(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -88,8 +81,10 @@ def register():
         return jsonify({"error": "Invalid or already used license key"}), 400
 
     password_hash = frost_hash(password)
+
     new_user = User(username=username, password_hash=password_hash, license_id=license.id)
     db.session.add(new_user)
+
     license.is_used = True
     db.session.commit()
 
@@ -105,6 +100,7 @@ def login():
         return jsonify({"error": "Username and password are required"}), 400
 
     user = User.query.filter_by(username=username).first()
+
     if not user:
         return jsonify({"error": "Incorrect login information"}), 401
 
@@ -112,11 +108,15 @@ def login():
         return jsonify({"error": f"User is banned: {user.ban_reason}"}), 403
 
     provided_hash = frost_hash(password)
+
     if provided_hash == user.password_hash:
-        user.last_login_ip = request.remote_addr  # Capture last login IP
-        user.last_login_time = datetime.now()  # Capture last login time
+        user.last_login_ip = request.remote_addr
+        user.last_login_time = datetime.now()
         db.session.commit()
-        return jsonify({"message": "Login successful", "last_login_ip": user.last_login_ip, "last_login_time": user.last_login_time})
+        return jsonify({
+            "message": "Login successful",
+            "rank": user.rank  # Include the user's rank in the response
+        })
     else:
         return jsonify({"error": "Incorrect login information"}), 401
 
@@ -210,13 +210,26 @@ def view_licenses():
 @app.route('/users', methods=['GET'])
 def view_users():
     admin_password = request.args.get('admin_password')
+
     if frost_hash(admin_password) != admin_hashed_password:
         return jsonify({'message': 'Unauthorized'}), 403
 
     users = User.query.all()
-    users_data = [{'username': user.username, 'license_used': user.license.key if user.license else None, 
-                  'banned': user.banned, 'ban_reason': user.ban_reason, 'last_login_ip': user.last_login_ip, 'last_login_time': user.last_login_time} for user in users]
+    users_data = [
+        {
+            'username': user.username,
+            'license_used': user.license.key if user.license else None,
+            'rank': user.rank,  # Include rank here
+            'banned': user.banned,
+            'ban_reason': user.ban_reason if user.banned else None,
+            'last_login_ip': user.last_login_ip,
+            'last_login_time': user.last_login_time
+        }
+        for user in users
+    ]
+
     return jsonify({'users': users_data}), 200
+
 
 # Route to ban a user
 @app.route('/ban_user', methods=['GET'])
